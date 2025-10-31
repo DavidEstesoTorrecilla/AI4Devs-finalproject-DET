@@ -1,0 +1,146 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database con extensión pgvector
+  postgres:
+    image: ankane/pgvector:latest
+    container_name: organis-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: organis_user
+      POSTGRES_PASSWORD: organis_password
+      POSTGRES_DB: organis_db
+    ports:
+      - '5432:5432'
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - organis-network
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U organis_user -d organis_db']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache para sesiones y resultados de SurfSense
+  redis:
+    image: redis:7-alpine
+    container_name: organis-redis
+    restart: unless-stopped
+    ports:
+      - '6379:6379'
+    volumes:
+      - redis_data:/data
+    networks:
+      - organis-network
+    command: redis-server --appendonly yes --requirepass organis_redis_password
+    healthcheck:
+      test: ['CMD', 'redis-cli', '--raw', 'incr', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Servidor XMPP (ejabberd) para comunicación entre agentes SPADE
+  xmpp:
+    image: ejabberd/ecs:latest
+    container_name: organis-xmpp
+    restart: unless-stopped
+    ports:
+      - '5222:5222'  # Cliente XMPP
+      - '5269:5269'  # Servidor a servidor
+      - '5280:5280'  # HTTP
+    environment:
+      - ERLANG_NODE=ejabberd
+      - EJABBERD_ADMIN_PASSWORD=admin123
+    volumes:
+      - xmpp_data:/home/ejabberd/database
+    networks:
+      - organis-network
+    healthcheck:
+      test: ['CMD-SHELL', 'ejabberdctl status']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Backend Gateway (FastAPI)
+  gateway:
+    build:
+      context: ./backend-gateway
+      dockerfile: Dockerfile
+    container_name: organis-gateway
+    restart: unless-stopped
+    ports:
+      - '8000:8000'
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://organis_user:organis_password@postgres:5432/organis_db
+      - REDIS_URL=redis://:organis_redis_password@redis:6379/0
+      - ORCHESTRATOR_URL=http://orchestrator:8001
+      - SURFSENSE_URL=http://surfsense:8002
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:3000
+    volumes:
+      - ./backend-gateway:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - organis-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Backend Orchestrator (SPADE Multi-Agent System)
+  orchestrator:
+    build:
+      context: ./backend-orchestrator
+      dockerfile: Dockerfile
+    container_name: organis-orchestrator
+    restart: unless-stopped
+    ports:
+      - '8001:8001'
+    environment:
+      - XMPP_SERVER=xmpp
+      - XMPP_PASSWORD=password123
+      - GATEWAY_URL=http://gateway:8000
+      - SURFSENSE_URL=http://surfsense:8002
+      - REDIS_URL=redis://:organis_redis_password@redis:6379/1
+    volumes:
+      - ./backend-orchestrator:/app
+    depends_on:
+      - xmpp
+      - gateway
+      - redis
+    networks:
+      - organis-network
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8001 --reload
+
+  # Frontend (React + Vite)
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: ../../infrastructure/docker/Dockerfile.frontend
+    container_name: organis-frontend
+    restart: unless-stopped
+    ports:
+      - '5173:5173'
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    volumes:
+      - ./apps/frontend:/app
+      - /app/node_modules
+    depends_on:
+      - gateway
+    networks:
+      - organis-network
+    command: npm run dev
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  xmpp_data:
+    driver: local
+
+networks:
+  organis-network:
+    driver: bridge

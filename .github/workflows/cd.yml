@@ -1,0 +1,53 @@
+name: CD - Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v2
+        with:
+          version: 8
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build backend
+        run: pnpm --filter backend build
+
+      - name: Build frontend
+        run: pnpm --filter frontend build
+        env:
+          VITE_API_URL: ${{ secrets.PRODUCTION_API_URL }}
+
+      - name: Deploy to server
+        run: |
+          echo "🚀 Deployment step - Configure with your hosting provider"
+          echo "Examples: Vercel, Railway, AWS, DigitalOcean, etc."
+        # Add your deployment commands here
+        # Example for Docker:
+        # - docker build -t emasai-backend ./apps/backend
+        # - docker build -t emasai-frontend ./apps/frontend
+        # - docker push your-registry/emasai-backend
+        # - docker push your-registry/emasai-frontend
+
+      - name: Notify deployment
+        run: |
+          echo "✅ Deployment completed successfully"

@@ -1,0 +1,13 @@
+{
+  "name": "backend-orchestrator",
+  "version": "1.0.0",
+  "description": "EMASAI (Organis.AI) - Orquestador Multi-Agente con SPADE",
+  "private": true,
+  "scripts": {
+    "dev": "python -m app.main",
+    "start": "python -m app.main",
+    "test": "pytest tests/ -v",
+    "lint": "ruff check .",
+    "format": "black ."
+  }
+}
